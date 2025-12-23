@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Christmas Magic Control</title>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #0d080d; font-family: 'Segoe UI', sans-serif; }
+        #canvas-container { width: 100%; height: 100vh; }
+        
+        #ui-layer {
+            position: absolute; bottom: 30px; width: 100%;
+            text-align: center; pointer-events: none; z-index: 100;
+        }
+        
+        .guide { 
+            color: rgba(255, 192, 203, 0.9); 
+            font-size: 14px; margin-bottom: 15px;
+            text-shadow: 0 0 10px rgba(0,0,0,1);
+            font-weight: bold; letter-spacing: 1px;
+        }
+
+        button {
+            pointer-events: auto; cursor: pointer;
+            background: linear-gradient(45deg, #FFC0CB, #FF69B4);
+            color: #FFF; border: 2px solid #FFFFFF;
+            padding: 16px 48px; border-radius: 35px; 
+            font-weight: 800; font-size: 17px;
+            box-shadow: 0 0 35px rgba(255, 105, 180, 0.5);
+            animation: pulse 1.8s infinite;
+        }
+        @keyframes pulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.03); opacity: 0.9; } }
+
+        #camera-preview {
+            position: absolute; top: 15px; right: 15px;
+            width: 130px; height: 95px; border-radius: 15px;
+            transform: scaleX(-1); opacity: 0.3; border: 1px solid #FFC0CB;
+        }
+
+        #status-info {
+            position: absolute; top: 20px; left: 50%; transform: translateX(-50%);
+            color: #FFC0CB; font-weight: bold; background: rgba(0,0,0,0.4);
+            padding: 8px 25px; border-radius: 30px; border: 1px solid #FF69B4;
+            display: none; pointer-events: none;
+            font-size: 13px; letter-spacing: 1px;
+        }
+
+        #christmas-card {
+            position: absolute; top: 40%; left: 50%; transform: translate(-50%, -50%);
+            background: rgba(255, 255, 255, 0.8);
+            padding: 25px 40px; border-radius: 15px;
+            box-shadow: 0 0 40px rgba(255, 105, 180, 0.7);
+            color: #FF69B4; font-size: 28px; font-weight: bold;
+            text-align: center; line-height: 1.5;
+            letter-spacing: 2px;
+            opacity: 0; transition: opacity 1s ease-in-out;
+            pointer-events: none; z-index: 200;
+            border: 2px solid #FFC0CB;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+        }
+        #christmas-card.show { opacity: 1; }
+    </style>
+</head>
+<body>
+
+    <div id="status-info">GENTLE CHRISTMAS ✨</div>
+
+    <div id="ui-layer">
+        <div class="guide">✊ Nắm: Cây thông | 🖐 Mở: Bung quà | 👌 Chụm: Zoom | 🫶 Trái tim/Xoay tay: Thiệp</div>
+        <button id="btnStart" onclick="startMagic()">Merry Christmas</button>
+    </div>
+
+    <div id="christmas-card">
+        MERRY CHRISTMAS <br>
+        <span style="font-size: 0.7em; font-weight: normal;">Wishing you joy, peace, and love!</span>
+    </div>
+
+    <div id="canvas-container"></div>
+    <video class="input_video" style="display:none"></video>
+    <canvas id="camera-preview"></canvas>
+
+    <audio id="bgMusic" loop>
+        <source src="audio.mp3" type="audio/mpeg">
+    </audio>
+
+    <script>
+        const photoFiles = ['image1.jpeg', 'image2.jpeg', 'image3.jpeg', 'image4.jpeg', 'image5.jpeg'];
+        let scene, camera, renderer, groupPink, groupWhite, groupGift, snowSystem;
+        let photoMeshes = [], photoTextures = [];
+        let state = 'TREE', isMouseDown = false;
+        let topStar, selectedPhotoIdx = 0;
+        let rootGroup, cardTimeout;
+
+        function createStarTexture(color = '#ffffff', glow = true) {
+            const canvas = document.createElement('canvas');
+            canvas.width = 64; canvas.height = 64;
+            const ctx = canvas.getContext('2d');
+            if (glow) {
+                const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+                gradient.addColorStop(0, color);
+                gradient.addColorStop(1, 'rgba(0,0,0,0)');
+                ctx.fillStyle = gradient; ctx.fillRect(0,0,64,64);
+            }
+            ctx.fillStyle = color;
+            let rot = Math.PI / 2 * 3; let step = Math.PI / 5;
+            ctx.beginPath();
+            for (let i = 0; i < 5; i++) {
+                ctx.lineTo(32 + Math.cos(rot) * 20, 32 + Math.sin(rot) * 20);
+                rot += step;
+                ctx.lineTo(32 + Math.cos(rot) * 8, 32 + Math.sin(rot) * 8);
+                rot += step;
+            }
+            ctx.fill();
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        function init3D() {
+            scene = new THREE.Scene();
+            scene.fog = new THREE.FogExp2(0x0d080d, 0.0025);
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.1, 1000);
+            camera.position.z = 120;
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            document.getElementById('canvas-container').appendChild(renderer.domElement);
+            rootGroup = new THREE.Group();
+            scene.add(rootGroup);
+            const loader = new THREE.TextureLoader();
+            photoFiles.forEach((url, i) => {
+                photoTextures[i] = loader.load(url, undefined, undefined, (err) => console.error("Lỗi tải ảnh: " + url));
+            });
+            groupPink = createParticles('pink', 2200, 2.8, '#FFB6C1');
+            groupWhite = createParticles('white', 1200, 2.2, '#FFFFFF');
+            groupGift = createParticles('gift', 150, 4.5, '#FF69B4');
+            rootGroup.add(groupPink, groupWhite, groupGift);
+            createStarSnow();
+            const starTex = createStarTexture('#FFFFFF', true);
+            const starMat = new THREE.SpriteMaterial({ map: starTex, transparent: true, blending: THREE.AdditiveBlending });
+            topStar = new THREE.Sprite(starMat);
+            topStar.scale.set(22, 22, 1);
+            topStar.position.y = 42;
+            rootGroup.add(topStar);
+            createPhotos();
+            setupEvents();
+            animate();
+        }
+
+        function createParticles(type, count, size, colorHex) {
+            const pos = [], tree = [], explode = [], heart = [];
+            const colors = new Float32Array(count * 3);
+            const baseCol = new THREE.Color(colorHex);
+            for(let i=0; i<count; i++) {
+                const h = Math.random() * 80;
+                const rMax = (1 - h/80) * 35;
+                const r = (type==='gift' ? rMax*0.9 : Math.sqrt(Math.random())*rMax);
+                const theta = Math.random() * Math.PI * 2;
+                tree.push(r * Math.cos(theta), h - 40, r * Math.sin(theta));
+                const t = Math.random() * Math.PI * 2;
+                const rFill = Math.pow(Math.random(), 0.8);
+                let hx = 16 * Math.pow(Math.sin(t), 3) * rFill;
+                let hy = (13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t)) * rFill;
+                heart.push(hx * 2.8, hy * 2.8 + 5, (Math.random()-0.5) * 10);
+                const rad = 80 * Math.cbrt(Math.random());
+                const p = Math.acos(2*Math.random()-1), l = 2*Math.PI*Math.random();
+                explode.push(rad*Math.sin(p)*Math.cos(l), rad*Math.sin(p)*Math.sin(l), rad*Math.cos(p));
+                pos.push(tree[i*3], tree[i*3+1], tree[i*3+2]);
+                colors[i*3] = baseCol.r; colors[i*3+1] = baseCol.g; colors[i*3+2] = baseCol.b;
+            }
+            const geo = new THREE.BufferGeometry();
+            geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+            geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+            geo.userData = { tree, explode, heart };
+            const mat = new THREE.PointsMaterial({
+                size: size, vertexColors: true, transparent: true, opacity: 0.7,
+                map: (type==='gift' ? null : createStarTexture(colorHex, true)), 
+                blending: THREE.AdditiveBlending, depthWrite: false
+            });
+            return new THREE.Points(geo, mat);
+        }
+
+        function createStarSnow() {
+            const count = 1500;
+            const pos = [], data = [];
+            for(let i=0; i<count; i++) {
+                pos.push((Math.random()-0.5)*500, Math.random()*200, (Math.random()-0.5)*500);
+                data.push({ speed: 0.08 + Math.random()*0.15, drift: Math.random()*0.02 });
+            }
+            const geo = new THREE.BufferGeometry();
+            geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+            const mat = new THREE.PointsMaterial({
+                size: 2.0, map: createStarTexture('#ffffff', false),
+                transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending
+            });
+            snowSystem = new THREE.Points(geo, mat);
+            snowSystem.userData = data;
+            scene.add(snowSystem);
+        }
+
+        function createPhotos() {
+            const photoGeo = new THREE.PlaneGeometry(16, 16);
+            for(let i=0; i<5; i++) {
+                const mesh = new THREE.Mesh(photoGeo, new THREE.MeshBasicMaterial({ map: photoTextures[i], side: THREE.DoubleSide }));
+                mesh.visible = false;
+                rootGroup.add(mesh);
+                photoMeshes.push(mesh);
+            }
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const time = Date.now() * 0.001;
+            const lerpFactor = 0.08;
+            if(state === 'TREE') {
+                rootGroup.rotation.y += 0.005;
+                rootGroup.scale.lerp(new THREE.Vector3(1, 1, 1), lerpFactor);
+            } else if(state === 'HEART') {
+                rootGroup.rotation.y += 0.01;
+                const beat = 1 + Math.abs(Math.sin(time * 2)) * 0.08;
+                rootGroup.scale.lerp(new THREE.Vector3(beat, beat, beat), lerpFactor);
+            } else {
+                rootGroup.rotation.y += 0.01;
+                rootGroup.scale.lerp(new THREE.Vector3(1,1,1), lerpFactor);
+            }
+            updateGroup(groupPink, (state === 'ZOOM_PHOTO' ? 'EXPLODE' : state), 0.08);
+            updateGroup(groupWhite, (state === 'ZOOM_PHOTO' ? 'EXPLODE' : state), 0.07);
+            updateGroup(groupGift, (state === 'ZOOM_PHOTO' ? 'EXPLODE' : state), 0.06);
+            const sPos = snowSystem.geometry.attributes.position.array;
+            for(let i=0; i<1500; i++) {
+                sPos[i*3+1] -= snowSystem.userData[i].speed;
+                if(sPos[i*3+1] < -80) sPos[i*3+1] = 120;
+            }
+            snowSystem.geometry.attributes.position.needsUpdate = true;
+            if(state === 'EXPLODE' || state === 'ZOOM_PHOTO' || state === 'HEART') {
+                const angStep = (Math.PI * 2) / 5;
+                const orbitRadius = (state === 'HEART') ? 30 : 50;
+                photoMeshes.forEach((m, i) => {
+                    m.visible = true;
+                    if (state === 'ZOOM_PHOTO' && i === selectedPhotoIdx) {
+                        m.position.lerp(new THREE.Vector3(0, 0, 80), 0.1);
+                        m.scale.lerp(new THREE.Vector3(3, 3, 1), 0.1);
+                        m.lookAt(camera.position);
+                    } else {
+                        const ang = (time * 0.3) + (i * angStep);
+                        const targetPos = new THREE.Vector3(Math.cos(ang)*orbitRadius, Math.sin(time*0.2+i)*8, Math.sin(ang)*orbitRadius);
+                        m.position.lerp(targetPos, 0.1);
+                        m.scale.lerp(new THREE.Vector3(1, 1, 1), 0.1);
+                        m.lookAt(camera.position);
+                        if(targetPos.z > orbitRadius * 0.7) selectedPhotoIdx = i;
+                    }
+                });
+            } else { photoMeshes.forEach(m => m.visible = false); }
+            const card = document.getElementById('christmas-card');
+            const status = document.getElementById('status-info');
+            if(state === 'HEART') { card.classList.add('show'); status.innerText = "ROMANTIC CARD ❤️"; }
+            else { card.classList.remove('show'); status.innerText = state.toUpperCase(); }
+            status.style.display = 'block';
+            renderer.render(scene, camera);
+        }
+
+        function updateGroup(group, targetState, speed) {
+            const pos = group.geometry.attributes.position.array;
+            const target = group.geometry.userData[targetState.toLowerCase()] || group.geometry.userData.tree;
+            for(let i=0; i<pos.length; i++) { pos[i] += (target[i] - pos[i]) * speed; }
+            group.geometry.attributes.position.needsUpdate = true;
+        }
+
+        function setupEvents() {
+            window.addEventListener('mousedown', () => { isMouseDown = true; state = 'EXPLODE'; });
+            window.addEventListener('mouseup', () => { isMouseDown = false; state = 'TREE'; });
+            window.addEventListener('resize', () => { camera.aspect = window.innerWidth/window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); });
+        }
+
+        function startMagic() {
+            document.getElementById('btnStart').style.display = 'none';
+            const music = document.getElementById('bgMusic');
+            music.play().catch(e => console.log("Lỗi nhạc:", e));
+            
+            init3D();
+            const video = document.querySelector('.input_video');
+            const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+            
+            hands.setOptions({ 
+                maxNumHands: 1, 
+                modelComplexity: 1, 
+                minDetectionConfidence: 0.6,
+                minTrackingConfidence: 0.6 
+            });
+
+            hands.onResults(results => {
+                if(results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                    const lm = results.multiHandLandmarks[0];
+                    
+                    // 1. Tính toán khoảng cách
+                    const pinchDist = Math.hypot(lm[4].x - lm[8].x, lm[4].y - lm[8].y);
+                    const thumbPinkyDist = Math.hypot(lm[4].x - lm[20].x, lm[4].y - lm[20].y);
+                    
+                    // 2. Kiểm tra nắm/mở tay
+                    const fingerTips = [8, 12, 16, 20];
+                    let openFingers = 0;
+                    fingerTips.forEach(tip => {
+                        if(lm[tip].y < lm[tip-2].y) openFingers++;
+                    });
+
+                    // 3. Kiểm tra độ xoay bàn tay (Lòng bàn tay hướng ra ngoài/vào trong)
+                    // Dựa trên vị trí ngón cái so với ngón út và cổ tay
+                    const isHandFlipped = lm[4].x > lm[20].x; 
+
+                    if(!isMouseDown) {
+                        // 👌 CHỤM NGÓN (PINCH): ZOOM ẢNH
+                        if(pinchDist < 0.04) {
+                            state = 'ZOOM_PHOTO';
+                        } 
+                        // 🫶 TRÁI TIM HOẶC XOAY TAY: MỞ THIỆP
+                        else if((thumbPinkyDist < 0.08) || isHandFlipped) {
+                            state = 'HEART';
+                            clearTimeout(cardTimeout);
+                            cardTimeout = setTimeout(() => { if(state === 'HEART') state = 'TREE'; }, 5000);
+                        }
+                        // ✊ NẮM TAY (0-1 ngón mở): CÂY THÔNG
+                        else if(openFingers <= 1) {
+                            state = 'TREE';
+                        } 
+                        // 🖐 MỞ TAY: BUNG QUÀ
+                        else {
+                            state = 'EXPLODE';
+                        }
+                    }
+                }
+            });
+
+            const cam = new Camera(video, { onFrame: async () => { await hands.send({image: video}); }, width: 320, height: 240 });
+            cam.start();
+        }
+    </script>
+</body>
+</html>
