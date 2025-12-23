@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Christmas Magic Control</title>
+    <title>Christmas Control - 1 Finger Zoom</title>
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
@@ -71,7 +71,7 @@
     <div id="status-info">GENTLE CHRISTMAS ✨</div>
 
     <div id="ui-layer">
-        <div class="guide">✊ Nắm: Cây thông | 🖐 Mở: Bung quà | 👌 Chụm: Zoom | 🫶 Trái tim/Xoay tay: Thiệp</div>
+        <div class="guide">✊ Nắm: Cây thông | 🖐 Mở: Bung quà | ☝️ 1 ngón: Zoom | 🫶 Xoay tay: Thiệp</div>
         <button id="btnStart" onclick="startMagic()">Merry Christmas</button>
     </div>
 
@@ -295,37 +295,39 @@
                 if(results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
                     const lm = results.multiHandLandmarks[0];
                     
-                    // 1. Tính toán khoảng cách
-                    const pinchDist = Math.hypot(lm[4].x - lm[8].x, lm[4].y - lm[8].y);
-                    const thumbPinkyDist = Math.hypot(lm[4].x - lm[20].x, lm[4].y - lm[20].y);
-                    
-                    // 2. Kiểm tra nắm/mở tay
-                    const fingerTips = [8, 12, 16, 20];
-                    let openFingers = 0;
-                    fingerTips.forEach(tip => {
-                        if(lm[tip].y < lm[tip-2].y) openFingers++;
-                    });
+                    // Kiểm tra các ngón tay có duỗi hay không
+                    // So sánh tọa độ Y của Tip (đầu ngón) với PIP (khớp thứ 2)
+                    const isIndexUp = lm[8].y < lm[6].y;
+                    const isMiddleUp = lm[12].y < lm[10].y;
+                    const isRingUp = lm[16].y < lm[14].y;
+                    const isPinkyUp = lm[20].y < lm[18].y;
 
-                    // 3. Kiểm tra độ xoay bàn tay (Lòng bàn tay hướng ra ngoài/vào trong)
-                    // Dựa trên vị trí ngón cái so với ngón út và cổ tay
+                    // Đếm số ngón tay đang mở
+                    let openFingers = 0;
+                    if(isIndexUp) openFingers++;
+                    if(isMiddleUp) openFingers++;
+                    if(isRingUp) openFingers++;
+                    if(isPinkyUp) openFingers++;
+
+                    // Kiểm tra độ xoay bàn tay (Lòng bàn tay hướng ra ngoài/vào trong)
                     const isHandFlipped = lm[4].x > lm[20].x; 
 
                     if(!isMouseDown) {
-                        // 👌 CHỤM NGÓN (PINCH): ZOOM ẢNH
-                        if(pinchDist < 0.04) {
+                        // ☝️ CHỈ 1 NGÓN TRỎ (INDEX FINGER UP): ZOOM ẢNH
+                        if(isIndexUp && openFingers === 1) {
                             state = 'ZOOM_PHOTO';
                         } 
-                        // 🫶 TRÁI TIM HOẶC XOAY TAY: MỞ THIỆP
-                        else if((thumbPinkyDist < 0.08) || isHandFlipped) {
+                        // 🫶 XOAY TAY HOẶC NGÓN CÁI CHẠM NGÓN ÚT: MỞ THIỆP
+                        else if(isHandFlipped || Math.hypot(lm[4].x - lm[20].x, lm[4].y - lm[20].y) < 0.08) {
                             state = 'HEART';
                             clearTimeout(cardTimeout);
                             cardTimeout = setTimeout(() => { if(state === 'HEART') state = 'TREE'; }, 5000);
                         }
-                        // ✊ NẮM TAY (0-1 ngón mở): CÂY THÔNG
-                        else if(openFingers <= 1) {
+                        // ✊ NẮM TAY (KHÔNG CÓ NGÓN NÀO MỞ): CÂY THÔNG
+                        else if(openFingers === 0) {
                             state = 'TREE';
                         } 
-                        // 🖐 MỞ TAY: BUNG QUÀ
+                        // 🖐 MỞ TAY (TỪ 2 NGÓN TRỞ LÊN): BUNG QUÀ
                         else {
                             state = 'EXPLODE';
                         }
